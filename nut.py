@@ -393,3 +393,74 @@ def entry_chamfer(diameter, pitch, z, opening_down):
     if opening_down:
         return Part.makeCone(r + depth, r, depth, Base.Vector(0, 0, z))
     return Part.makeCone(r, r + depth, depth, Base.Vector(0, 0, z - depth))
+
+
+# ---------------------------------------------------------------------------
+# Geometry: bodies
+# ---------------------------------------------------------------------------
+
+def _hex_prism(width, height, z0=0.0):
+    """Hexagonal prism of the given across-flats size, sitting on z0."""
+    r = width / math.sqrt(3.0)
+    points = [Base.Vector(r * math.cos(math.radians(60 * i)),
+                          r * math.sin(math.radians(60 * i)), z0)
+              for i in range(6)]
+    face = Part.Face(Part.Wire(Part.makePolygon(points + [points[0]])))
+    return face.extrude(Base.Vector(0, 0, height))
+
+
+def _face_chamfer(width, z, from_below):
+    """Ring to subtract that cuts the hex corners back on a bearing face.
+
+    Every real hex nut has one: a 30 degree chamfer taking the corners back to
+    CHAMFER_CIRCLE of the across-flats size, so the nut has no fragile points
+    and seats flat. Built as cylinder-minus-cone, the same way screw.py builds
+    its tip chamfer, because cutting a ring is far cheaper than picking edges.
+
+    from_below is True for the bottom face, where the chamfer opens downwards.
+    """
+    r_corner = width / math.sqrt(3.0)
+    r_flat = CHAMFER_CIRCLE * width / 2.0
+    height = (r_corner - r_flat) * math.tan(math.radians(30.0))
+    if from_below:
+        z0 = z
+        cone = Part.makeCone(r_flat, r_corner, height, Base.Vector(0, 0, z0))
+    else:
+        z0 = z - height
+        cone = Part.makeCone(r_corner, r_flat, height, Base.Vector(0, 0, z0))
+    return Part.makeCylinder(r_corner + 1.0, height,
+                             Base.Vector(0, 0, z0)).cut(cone)
+
+
+def _spherical_cap(base_radius, height, z0):
+    """Spherical cap of the given base radius and height, sitting on z0.
+
+    A sphere of radius R = (a^2 + h^2) / 2h meets the plane z0 at exactly the
+    base radius, so the cap springs from its seat with no ledge and no fillet.
+    """
+    r_sphere = (base_radius * base_radius + height * height) / (2.0 * height)
+    sphere = Part.makeSphere(r_sphere, Base.Vector(0, 0, z0 + height - r_sphere))
+    return sphere.common(Part.makeCylinder(base_radius, height,
+                                           Base.Vector(0, 0, z0)))
+
+
+def _unwrap(shape):
+    """multiFuse, common and cut all hand back a single-solid Compound."""
+    shape = shape.removeSplitter()
+    if shape.ShapeType == "Compound" and len(shape.Solids) == 1:
+        return shape.Solids[0]
+    return shape
+
+
+def build_body(kind, diameter):
+    """The nut's outside shape, before the thread is cut. Base at z=0."""
+    width = across_flats(kind, diameter)
+    height = body_height(kind, diameter)
+
+    if kind == "hex":
+        body = _hex_prism(width, height)
+        body = body.cut(_face_chamfer(width, 0.0, True))
+        body = body.cut(_face_chamfer(width, height, False))
+        return _unwrap(body)
+
+    raise ValueError("Unknown nut type %r." % kind)
