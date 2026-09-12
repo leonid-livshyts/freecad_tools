@@ -542,3 +542,218 @@ def build_screw(p, doc=None):
         Gui.SendMsgToActiveView("ViewFit")
 
     return part
+
+
+# ---------------------------------------------------------------------------
+# Preview text
+# ---------------------------------------------------------------------------
+
+def preview_lines(p):
+    """Derived dimensions plus any problem with the current values.
+
+    Kept out of the dialog class so it can be tested without a GUI.
+    """
+    errors, warnings = validate(p)
+    d, length, pitch = p["diameter"], p["length"], p["pitch"]
+    kind = p["head"]
+
+    lines = ["Thread M%g x %g mm" % (d, pitch)]
+    if not errors:
+        if is_countersunk(kind):
+            lines.append("Length %g mm overall (countersunk head sinks in), "
+                         "shank %.3f mm" % (length, shank_length(kind, d, length)))
+        else:
+            lines.append("Shank %g mm, %.3f mm overall with the head"
+                         % (length, head_top_z(kind, d, length)))
+        if kind == "hex":
+            lines.append("Head %.3f mm across flats, %.3f mm tall"
+                         % (head_across_flats(d), head_height(kind, d)))
+        else:
+            lines.append("Head %.3f mm across, %.3f mm tall"
+                         % (2 * head_radius(kind, d), head_height(kind, d)))
+        lines.append("Core %.3f mm across  -  %d thread turns  -  about %.0f s to build"
+                     % (2 * minor_radius(d, pitch),
+                        thread_turns(kind, d, length, pitch),
+                        estimated_seconds(kind, d, length, pitch)))
+    for message in errors:
+        lines.append("Error: " + message)
+    for message in warnings:
+        lines.append("Warning: " + message)
+    return lines
+
+
+# ---------------------------------------------------------------------------
+# GUI
+# ---------------------------------------------------------------------------
+
+if App.GuiUp:
+    import FreeCADGui as Gui
+    # FreeCAD ships a PySide shim (Ext/PySide) that forwards to the PySide
+    # version this build uses (PySide6 on FreeCAD 1.x), so this import works
+    # unchanged across FreeCAD versions.
+    from PySide import QtCore, QtWidgets
+
+    class ScrewDialog(QtWidgets.QDialog):
+        """Parameter dialog for the screw."""
+
+        def __init__(self, values=None, parent=None):
+            if parent is None:
+                parent = Gui.getMainWindow()
+            super(ScrewDialog, self).__init__(parent)
+
+            self.setWindowTitle("Screw")
+            self.setModal(True)
+
+            values = dict(values or DEFAULTS)
+            self.spins = {}
+
+            form = QtWidgets.QFormLayout()
+            form.setFieldGrowthPolicy(QtWidgets.QFormLayout.AllNonFixedFieldsGrow)
+
+            for key, label, tip in FIELDS:
+                spin = QtWidgets.QDoubleSpinBox()
+                spin.setDecimals(3)
+                spin.setRange(0.0, 100000.0)
+                spin.setSingleStep(0.5 if key == "pitch" else 1.0)
+                spin.setSuffix(" mm")
+                spin.setValue(float(values[key]))
+                spin.setToolTip(tip)
+                spin.valueChanged.connect(self.update_preview)
+                self.spins[key] = spin
+                form.addRow(label + ":", spin)
+
+            self.head = QtWidgets.QComboBox()
+            for key, label in HEAD_TYPES:
+                self.head.addItem(label, key)
+            self.head.setCurrentIndex(
+                max(0, [k for k, _ in HEAD_TYPES].index(values["head"])))
+            self.head.setToolTip("Shape of the head. Flat and oval heads sink into "
+                                 "the material, so their length is measured overall.")
+            self.head.currentIndexChanged.connect(self.head_changed)
+            form.addRow("Head shape:", self.head)
+
+            self.drive = QtWidgets.QComboBox()
+            for key, label in DRIVE_TYPES:
+                self.drive.addItem(label, key)
+            self.drive.setCurrentIndex(
+                max(0, [k for k, _ in DRIVE_TYPES].index(values["drive"])))
+            self.drive.setToolTip("Recess in the top of the head for the driver")
+            self.drive.currentIndexChanged.connect(self.update_preview)
+            form.addRow("Drive:", self.drive)
+
+            self.new_doc = QtWidgets.QCheckBox("Create a new document")
+            self.new_doc.setChecked(bool(values.get("new_document", True)))
+            self.new_doc.setToolTip("Unchecked, the screw is added to the active document")
+            form.addRow("", self.new_doc)
+
+            # Derived values and problems, refreshed on every edit.
+            self.preview = QtWidgets.QLabel()
+            self.preview.setWordWrap(True)
+            self.preview.setTextFormat(QtCore.Qt.PlainText)
+            self.preview.setMinimumWidth(380)
+
+            self.buttons = QtWidgets.QDialogButtonBox(
+                QtWidgets.QDialogButtonBox.Ok
+                | QtWidgets.QDialogButtonBox.Cancel
+                | QtWidgets.QDialogButtonBox.RestoreDefaults
+            )
+            self.buttons.button(QtWidgets.QDialogButtonBox.Ok).setText("Create")
+            self.buttons.accepted.connect(self.accept)
+            self.buttons.rejected.connect(self.reject)
+            self.buttons.button(QtWidgets.QDialogButtonBox.RestoreDefaults).clicked.connect(
+                self.restore_defaults
+            )
+
+            layout = QtWidgets.QVBoxLayout(self)
+            layout.addLayout(form)
+            layout.addWidget(self.preview)
+            layout.addWidget(self.buttons)
+
+            self.head_changed()
+
+        def parameters(self):
+            """Read the widgets back into a parameter dict."""
+            p = {key: spin.value() for key, spin in self.spins.items()}
+            p["head"] = self.head.currentData()
+            p["drive"] = self.drive.currentData()
+            p["new_document"] = self.new_doc.isChecked()
+            return p
+
+        def head_changed(self):
+            # A hex head is driven by its flats, so a recess makes no sense.
+            hex_head = self.head.currentData() == "hex"
+            if hex_head:
+                self.drive.setCurrentIndex([k for k, _ in DRIVE_TYPES].index("none"))
+            self.drive.setEnabled(not hex_head)
+            self.update_preview()
+
+        def restore_defaults(self):
+            for key, spin in self.spins.items():
+                spin.setValue(float(DEFAULTS[key]))
+            self.head.setCurrentIndex([k for k, _ in HEAD_TYPES].index(DEFAULTS["head"]))
+            self.drive.setCurrentIndex([k for k, _ in DRIVE_TYPES].index(DEFAULTS["drive"]))
+            self.new_doc.setChecked(bool(DEFAULTS["new_document"]))
+            self.head_changed()
+
+        def update_preview(self):
+            p = self.parameters()
+            errors, _ = validate(p)
+            self.preview.setText("\n".join(preview_lines(p)))
+            self.buttons.button(QtWidgets.QDialogButtonBox.Ok).setEnabled(not errors)
+
+        def accept(self):
+            p = self.parameters()
+            errors, warnings = validate(p)
+            if errors:
+                QtWidgets.QMessageBox.critical(
+                    self, "Screw", "This screw cannot be built:\n\n- "
+                    + "\n- ".join(errors))
+                return
+            if warnings:
+                answer = QtWidgets.QMessageBox.warning(
+                    self, "Screw",
+                    "This builds, but:\n\n- " + "\n- ".join(warnings)
+                    + "\n\nCreate it anyway?",
+                    QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No,
+                    QtWidgets.QMessageBox.No)
+                if answer != QtWidgets.QMessageBox.Yes:
+                    return
+            super(ScrewDialog, self).accept()
+
+    # Values carry over to the next run within the same FreeCAD session.
+    _last_values = dict(DEFAULTS)
+
+    def show_dialog():
+        """Ask for the parameters and build the screw if the user confirms."""
+        global _last_values
+        dialog = ScrewDialog(_last_values)
+        if dialog.exec() != QtWidgets.QDialog.Accepted:
+            return None
+        _last_values = dialog.parameters()
+        # A long fine-pitch thread is minutes of sweeps; say so before freezing.
+        App.Console.PrintMessage(
+            "Screw: building %d thread turns, this may take about %.0f seconds\n"
+            % (thread_turns(_last_values["head"], _last_values["diameter"],
+                            _last_values["length"], _last_values["pitch"]),
+               estimated_seconds(_last_values["head"], _last_values["diameter"],
+                                 _last_values["length"], _last_values["pitch"])))
+        QtWidgets.QApplication.setOverrideCursor(QtCore.Qt.WaitCursor)
+        try:
+            return build_screw(_last_values)
+        except Exception as exc:  # OCC can still refuse a geometrically odd set
+            App.Console.PrintError("Screw: %s\n" % exc)
+            QtWidgets.QMessageBox.critical(
+                Gui.getMainWindow(), "Screw",
+                "FreeCAD could not build this screw:\n\n%s" % exc)
+            return None
+        finally:
+            QtWidgets.QApplication.restoreOverrideCursor()
+
+
+# FreeCAD executes a macro with __name__ set to "__main__"; the extra names
+# cover being pasted into the Python console.
+if __name__ in ("__main__", "__builtin__", "builtins"):
+    if App.GuiUp:
+        show_dialog()
+    else:
+        build_screw(DEFAULTS)

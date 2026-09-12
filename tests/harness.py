@@ -22,15 +22,26 @@ class Checks(object):
         self.title = title
         self.passed = 0
         self.failed = []
-        print("== %s ==" % title)
+        self.log = []
+        self._say("== %s ==" % title)
+
+    def _say(self, line):
+        """Print, and keep a copy for HARNESS_OUT.
+
+        The GUI binary swallows stdout into FreeCAD's Report view, so a test
+        that has to run under the GUI (the dialog) needs its results written to
+        a file to be readable from outside.
+        """
+        self.log.append(line)
+        print(line)
 
     def ok(self, name, condition, detail=""):
         if condition:
             self.passed += 1
-            print("  ok   %s" % name)
+            self._say("  ok   %s" % name)
         else:
             self.failed.append(name)
-            print("  FAIL %s %s" % (name, detail))
+            self._say("  FAIL %s %s" % (name, detail))
 
     def close(self, name, got, want, tol=1e-6):
         """Assert a float is within tol of the wanted value."""
@@ -42,11 +53,17 @@ class Checks(object):
                 "got %.6f, wanted between %.6f and %.6f" % (got, low, high))
 
     def report(self):
-        print("%s: %d passed, %d failed" % (self.title, self.passed, len(self.failed)))
+        self._say("%s: %d passed, %d failed"
+                  % (self.title, self.passed, len(self.failed)))
         if self.failed:
-            print("RESULT: FAIL (%d) -> %s" % (len(self.failed), ", ".join(self.failed)))
+            self._say("RESULT: FAIL (%d) -> %s"
+                      % (len(self.failed), ", ".join(self.failed)))
         else:
-            print("RESULT: PASS")
+            self._say("RESULT: PASS")
+        out = os.environ.get("HARNESS_OUT")
+        if out:
+            with open(out, "w") as handle:
+                handle.write("\n".join(self.log) + "\n")
 
 
 def max_radius(shape):
