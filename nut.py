@@ -661,3 +661,160 @@ def preview_lines(p):
     for message in warnings:
         lines.append("Warning: " + message)
     return lines
+
+
+# ---------------------------------------------------------------------------
+# GUI
+# ---------------------------------------------------------------------------
+
+if App.GuiUp:
+    import FreeCADGui as Gui
+    # FreeCAD ships a PySide shim (Ext/PySide) that forwards to the PySide
+    # version this build uses (PySide6 on FreeCAD 1.x), so this import works
+    # unchanged across FreeCAD versions.
+    from PySide import QtCore, QtWidgets
+
+    class NutDialog(QtWidgets.QDialog):
+        """Parameter dialog for the nut."""
+
+        def __init__(self, values=None, parent=None):
+            if parent is None:
+                parent = Gui.getMainWindow()
+            super(NutDialog, self).__init__(parent)
+
+            self.setWindowTitle("Nut")
+            self.setModal(True)
+
+            values = dict(values or DEFAULTS)
+            self.spins = {}
+
+            form = QtWidgets.QFormLayout()
+            form.setFieldGrowthPolicy(QtWidgets.QFormLayout.AllNonFixedFieldsGrow)
+
+            for key, label, tip in FIELDS:
+                spin = QtWidgets.QDoubleSpinBox()
+                spin.setDecimals(3)
+                spin.setRange(0.0, 100000.0)
+                spin.setSingleStep(0.5 if key == "pitch" else 1.0)
+                spin.setSuffix(" mm")
+                spin.setValue(float(values[key]))
+                spin.setToolTip(tip)
+                spin.valueChanged.connect(self.update_preview)
+                self.spins[key] = spin
+                form.addRow(label + ":", spin)
+
+            self.kind = QtWidgets.QComboBox()
+            for key, label in NUT_TYPES:
+                self.kind.addItem(label, key)
+            self.kind.setCurrentIndex(
+                max(0, [k for k, _ in NUT_TYPES].index(values["kind"])))
+            self.kind.setToolTip("Body style. Lock and lug nuts are closed at the "
+                                 "top, so their thread is blind.")
+            self.kind.currentIndexChanged.connect(self.update_preview)
+            form.addRow("Nut type:", self.kind)
+
+            self.new_doc = QtWidgets.QCheckBox("Create a new document")
+            self.new_doc.setChecked(bool(values.get("new_document", True)))
+            self.new_doc.setToolTip("Unchecked, the nut is added to the active document")
+            form.addRow("", self.new_doc)
+
+            # Derived values and problems, refreshed on every edit.
+            self.preview = QtWidgets.QLabel()
+            self.preview.setWordWrap(True)
+            self.preview.setTextFormat(QtCore.Qt.PlainText)
+            self.preview.setMinimumWidth(380)
+
+            self.buttons = QtWidgets.QDialogButtonBox(
+                QtWidgets.QDialogButtonBox.Ok
+                | QtWidgets.QDialogButtonBox.Cancel
+                | QtWidgets.QDialogButtonBox.RestoreDefaults
+            )
+            self.buttons.button(QtWidgets.QDialogButtonBox.Ok).setText("Create")
+            self.buttons.accepted.connect(self.accept)
+            self.buttons.rejected.connect(self.reject)
+            self.buttons.button(QtWidgets.QDialogButtonBox.RestoreDefaults).clicked.connect(
+                self.restore_defaults
+            )
+
+            layout = QtWidgets.QVBoxLayout(self)
+            layout.addLayout(form)
+            layout.addWidget(self.preview)
+            layout.addWidget(self.buttons)
+
+            self.update_preview()
+
+        def parameters(self):
+            """Read the widgets back into a parameter dict."""
+            p = {key: spin.value() for key, spin in self.spins.items()}
+            p["kind"] = self.kind.currentData()
+            p["new_document"] = self.new_doc.isChecked()
+            return p
+
+        def restore_defaults(self):
+            for key, spin in self.spins.items():
+                spin.setValue(float(DEFAULTS[key]))
+            self.kind.setCurrentIndex([k for k, _ in NUT_TYPES].index(DEFAULTS["kind"]))
+            self.new_doc.setChecked(bool(DEFAULTS["new_document"]))
+            self.update_preview()
+
+        def update_preview(self):
+            p = self.parameters()
+            errors, _ = validate(p)
+            self.preview.setText("\n".join(preview_lines(p)))
+            self.buttons.button(QtWidgets.QDialogButtonBox.Ok).setEnabled(not errors)
+
+        def accept(self):
+            p = self.parameters()
+            errors, warnings = validate(p)
+            if errors:
+                QtWidgets.QMessageBox.critical(
+                    self, "Nut", "This nut cannot be built:\n\n- "
+                    + "\n- ".join(errors))
+                return
+            if warnings:
+                answer = QtWidgets.QMessageBox.warning(
+                    self, "Nut",
+                    "This builds, but:\n\n- " + "\n- ".join(warnings)
+                    + "\n\nCreate it anyway?",
+                    QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No,
+                    QtWidgets.QMessageBox.No)
+                if answer != QtWidgets.QMessageBox.Yes:
+                    return
+            super(NutDialog, self).accept()
+
+    # Values carry over to the next run within the same FreeCAD session.
+    _last_values = dict(DEFAULTS)
+
+    def show_dialog():
+        """Ask for the parameters and build the nut if the user confirms."""
+        global _last_values
+        dialog = NutDialog(_last_values)
+        if dialog.exec() != QtWidgets.QDialog.Accepted:
+            return None
+        _last_values = dialog.parameters()
+        App.Console.PrintMessage(
+            "Nut: building %d thread turns, this may take about %.0f seconds\n"
+            % (thread_turns(_last_values["kind"], _last_values["diameter"],
+                            _last_values["pitch"]),
+               estimated_seconds(_last_values["kind"], _last_values["diameter"],
+                                 _last_values["pitch"])))
+        QtWidgets.QApplication.setOverrideCursor(QtCore.Qt.WaitCursor)
+        try:
+            return build_nut(_last_values)
+        except Exception as exc:  # OCC can still refuse a geometrically odd set
+            App.Console.PrintError("Nut: %s\n" % exc)
+            QtWidgets.QMessageBox.critical(
+                Gui.getMainWindow(), "Nut",
+                "FreeCAD could not build this nut:\n\n%s" % exc)
+            return None
+        finally:
+            QtWidgets.QApplication.restoreOverrideCursor()
+
+
+# FreeCAD executes a macro with __name__ set to "__main__"; the extra names
+# cover being pasted into the Python console.
+if __name__ in ("__main__", "__builtin__", "builtins"):
+    if App.GuiUp:
+        show_dialog()
+    else:
+        build_nut(DEFAULTS)
