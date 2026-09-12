@@ -95,8 +95,11 @@ SINK_FACTOR = 0.02
 BOOLEAN_FUZZ = 1e-5
 
 # 45 degree lead-in at the mouth of the bore, as a multiple of the thread depth,
-# so the first thread is not a knife edge and a screw starts squarely.
+# so the first thread is not a knife edge and a screw starts squarely. Where the
+# face around the bore is narrower than that, the chamfer is clamped to this
+# fraction of the metal actually available, so it can never eat the whole face.
 ENTRY_CHAMFER_FACTOR = 1.0
+ENTRY_CHAMFER_MARGIN = 0.5
 
 # Hex corners are cut back to this fraction of the across-flats size on the
 # bearing faces, at 30 degrees - the chamfer every real hex nut carries.
@@ -120,7 +123,7 @@ NUT_METRICS = {
     "lock": {"across_flats": 1.60, "body": 0.90, "thread": 0.65,
              "crown": 0.30, "dome": 0.0, "seat": 0.0},
     "lug":  {"across_flats": 1.60, "body": 1.00, "thread": 0.85,
-             "crown": 0.0, "dome": 0.45, "seat": 0.647},
+             "crown": 0.0, "dome": 0.45, "seat": 0.45},
 }
 
 # Wing proportions, as multiples of the nominal diameter. Each wing is a plate
@@ -221,6 +224,16 @@ def wall_thickness(kind, diameter):
     Measured to the flats, which are nearer the axis than the corners.
     """
     return across_flats(kind, diameter) / 2.0 - (diameter / 2.0 + CLEARANCE)
+
+
+def seat_radius(kind, diameter):
+    """Radius where a lug nut's conical seat meets its bottom face.
+
+    This is the whole of the metal around the bore down there, and it is narrow:
+    a 60 degree seat pulls the body in fast.
+    """
+    return (corner_radius(kind, diameter)
+            - NUT_METRICS[kind]["seat"] * diameter * math.tan(math.radians(30.0)))
 
 
 def collar_radius(diameter, pitch):
@@ -385,14 +398,25 @@ def build_thread_tool(diameter, pitch, z0, z1):
     return tool
 
 
-def entry_chamfer(diameter, pitch, z, opening_down):
+def entry_chamfer(diameter, pitch, z, opening_down, limit=None):
     """Cone to subtract at a bore mouth, so the first thread is not a knife edge.
 
     opening_down is True for the mouth in the bottom face, where the bore has to
     flare downwards; False for the mouth in a top face.
+
+    limit is the outer radius of the face being chamfered, for the case where
+    that face is narrower than the chamfer wants to be. A lug nut's conical seat
+    leaves a rim of only a fifth of a millimetre around the bore, and an
+    unclamped chamfer ate the whole bottom face and bit into the cone behind it -
+    the nut came out 0.3 mm short with no seat to sit on. Returns None when no
+    chamfer fits at all.
     """
     depth = ENTRY_CHAMFER_FACTOR * thread_depth(pitch)
     r = diameter / 2.0 + CLEARANCE
+    if limit is not None:
+        depth = min(depth, max(0.0, (limit - r) * ENTRY_CHAMFER_MARGIN))
+    if depth <= 0.0:
+        return None
     if opening_down:
         return Part.makeCone(r + depth, r, depth, Base.Vector(0, 0, z))
     return Part.makeCone(r, r + depth, depth, Base.Vector(0, 0, z - depth))
@@ -521,7 +545,7 @@ def build_body(kind, diameter):
         r_corner = width / math.sqrt(3.0)
         seat_h = NUT_METRICS[kind]["seat"] * diameter
         # 60 degrees included means the radius grows by rise * tan(30).
-        r_seat = r_corner - seat_h * math.tan(math.radians(30.0))
+        r_seat = seat_radius(kind, diameter)
         envelope = Part.makeCone(r_seat, r_corner, seat_h).fuse(
             Part.makeCylinder(r_corner, height - seat_h,
                               Base.Vector(0, 0, seat_h)))
@@ -597,9 +621,16 @@ def build_nut(p, doc=None):
             Base.Vector(0, 0, threaded)))
 
     # Break the mouth of the bore so the first thread is not a knife edge.
-    solid = solid.cut(entry_chamfer(d, pitch, 0.0, True))
+    # The bottom face of a lug nut is just the rim of its conical seat, so the
+    # chamfer there has to be told how little metal it has to work with.
+    limit = seat_radius(kind, d) if NUT_METRICS[kind]["seat"] else None
+    mouth = entry_chamfer(d, pitch, 0.0, True, limit)
+    if mouth is not None:
+        solid = solid.cut(mouth)
     if through:
-        solid = solid.cut(entry_chamfer(d, pitch, body_height(kind, d), False))
+        mouth = entry_chamfer(d, pitch, body_height(kind, d), False)
+        if mouth is not None:
+            solid = solid.cut(mouth)
 
     solid = _unwrap(solid)
 
