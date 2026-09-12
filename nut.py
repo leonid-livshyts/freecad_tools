@@ -625,3 +625,39 @@ def build_nut(p, doc=None):
         Gui.SendMsgToActiveView("ViewFit")
 
     return part
+
+
+# ---------------------------------------------------------------------------
+# Preview text
+# ---------------------------------------------------------------------------
+
+def preview_lines(p):
+    """Derived dimensions plus any problem with the current values.
+
+    Kept out of the dialog class so it can be tested without a GUI.
+    """
+    errors, warnings = validate(p)
+    d, pitch, kind = p["diameter"], p["pitch"], p["kind"]
+
+    lines = ["Thread M%g x %g mm" % (d, pitch)]
+    if not errors:
+        label = dict(NUT_TYPES)[kind]
+        lines.append("%s, %.3f mm across flats, %.3f mm tall"
+                     % (label, across_flats(kind, d), overall_height(kind, d)))
+        blind = thread_height(kind, d) < body_height(kind, d) - 1e-9
+        lines.append("Bore %.3f mm at the thread crest, %s %.3f mm deep"
+                     % (2 * (minor_radius(d, pitch) + CLEARANCE),
+                        "blind thread" if blind else "threaded right through,",
+                        thread_height(kind, d)))
+        # The number people actually need when they print one of these.
+        lines.append("Wall %.3f mm  -  %.2f mm clearance on the thread, so about "
+                     "%.2f mm of play on a screw"
+                     % (wall_thickness(kind, d), CLEARANCE, CLEARANCE / 2.0))
+        lines.append("%d thread turns  -  about %.0f s to build"
+                     % (thread_turns(kind, d, pitch),
+                        estimated_seconds(kind, d, pitch)))
+    for message in errors:
+        lines.append("Error: " + message)
+    for message in warnings:
+        lines.append("Warning: " + message)
+    return lines
