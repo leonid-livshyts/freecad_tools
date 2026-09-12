@@ -5,6 +5,7 @@ import math
 
 from harness import Checks, max_radius, min_radius, z_extent
 import Part
+from FreeCAD import Base
 import screw
 
 c = Checks("shank")
@@ -61,5 +62,74 @@ c.ok("M3x0.5 one solid", len(small.Solids) == 1)
 c.ok("M3x0.5 valid", small.isValid())
 c.close("M3x0.5 major radius", max_radius(small), 1.5, 1e-4)
 c.close("M3x0.5 length", z_extent(small)[1], 6.0, 1e-4)
+
+
+# ---------------------------------------------------------------------------
+# Thread form, measured off an axial section.
+#
+# Everything above passes on a sharp-crested V too - volume, radii and validity
+# cannot tell a knife edge from a proper crest land, which is exactly how the
+# first version shipped with no crest flat at all. These are the checks that
+# pin the ISO 68-1 form down.
+# ---------------------------------------------------------------------------
+
+def flats(zs, pitch):
+    """Pair up consecutive section vertices that bound the same flat."""
+    out, i = [], 0
+    while i < len(zs) - 1:
+        width = zs[i + 1] - zs[i]
+        if width < pitch * 0.5:      # a flat, not the gap to the next thread
+            out.append(width)
+            i += 2
+        else:
+            i += 1
+    return out
+
+
+for (fd, fl, fp) in ((8.0, 8.0, 1.25), (6.0, 8.0, 1.0), (3.0, 6.0, 0.5)):
+    form = screw.build_shank(fd, fl, fp)
+    fr = fd / 2.0
+    fh3 = screw.thread_depth(fp)
+    frmin = fr - fh3
+    tag = "M%g x %g" % (fd, fp)
+
+    section = sorted(set((round(v.Point.z, 6), round(v.Point.x, 6))
+                         for w in form.slice(Base.Vector(0, 1, 0), 0.0)
+                         for v in w.Vertexes if v.Point.x > 0))
+    c.ok("%s section is not empty" % tag, len(section) > 0)
+    if not section:
+        continue
+
+    crest_z = sorted(z for z, x in section if abs(x - fr) < 1e-4)
+    root_z = sorted(z for z, x in section if abs(x - frmin) < 1e-4)
+
+    # A sharp crest gives one vertex per turn; a proper land gives a pair.
+    c.ok("%s crest is a land, not a knife edge" % tag, len(crest_z) >= 4,
+         "only %d vertices at the major radius" % len(crest_z))
+
+    # Drop the first flat of each kind: at the chamfered tip the section starts
+    # mid-thread, so that one is a partial.
+    crest_lands = flats(crest_z, fp)[1:] or flats(crest_z, fp)
+    root_flats = flats(root_z, fp)[1:] or flats(root_z, fp)
+    c.ok("%s has crest lands to measure" % tag, len(crest_lands) > 0)
+    c.ok("%s has root flats to measure" % tag, len(root_flats) > 0)
+    for width in crest_lands[:4]:
+        c.close("%s crest land is pitch/8" % tag, width, screw.crest_flat(fp), 2e-3)
+    for width in root_flats[:4]:
+        c.close("%s root flat is pitch/6" % tag, width, screw.root_flat(fp), 2e-3)
+
+    # Flanks must be 30 degrees off radial, i.e. a 60 degree included angle.
+    if len(crest_z) >= 2 and root_z:
+        above = [z for z in root_z if z > crest_z[1]]
+        if above:
+            rise = above[0] - crest_z[1]
+            c.close("%s flank is 30 degrees off radial" % tag,
+                    math.degrees(math.atan2(rise, fh3)), 30.0, 0.2)
+
+    # The three add up to the pitch, which is the ISO form's defining identity.
+    if crest_lands and root_flats:
+        span = (crest_lands[0] + root_flats[0]
+                + 2 * fh3 * math.tan(math.radians(30.0)))
+        c.close("%s crest + 2 flanks + root spans one pitch" % tag, span, fp, 3e-3)
 
 c.report()

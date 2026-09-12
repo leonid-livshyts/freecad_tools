@@ -23,9 +23,18 @@ the path), or point the macro directory at this repository.
   any diameter gives a plausible head - right for visualisation and printing,
   not a certified fastener.
 
-  The thread is real helical geometry, built one turn at a time, which costs
-  roughly a quarter of a second per turn. The dialog shows the turn count and an
-  estimated build time, and warns past 150 turns.
+  The thread is real helical geometry in the ISO 68-1 form - 60 degree flanks,
+  depth 0.6134 x pitch, a crest land of pitch/8 and a root flat of pitch/6 - and
+  `tests/test_shank.py` measures all of that off an axial section. It is built
+  one turn at a time, which costs roughly a quarter of a second per turn; the
+  dialog shows the turn count and an estimated build time, and warns past 150
+  turns.
+
+## Samples
+
+`samples/screw_samples.FCStd` holds all seven head shapes at M8 x 1.25 x 25 mm
+plus the thread at M3 x 0.5, M8 x 1.25 and M20 x 2.5, for eyeballing the form.
+Regenerate it by building the same variants into one document.
 
 ## Without the GUI
 

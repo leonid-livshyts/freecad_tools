@@ -91,13 +91,32 @@ DRIVE_METRICS = {
     "hex_socket": {"flats": 0.75, "depth": 0.60},
 }
 
-# ISO metric thread: 60 degree flanks, external thread depth 0.6134 * pitch.
+# ISO 68-1 metric thread: 60 degree flanks, external thread depth 0.6134 * pitch.
+# The form is a truncated V, not a sharp one. Of the fundamental triangle of
+# height H = 0.866 * pitch, H/8 is cut off the crest and H/6 off the root, which
+# leaves the depth below and lands a flat of pitch/8 on the crest and pitch/6 in
+# the root. Those three add up across one pitch exactly:
+#     pitch/8 + 2 * h3 * tan(30) + pitch/6 == pitch
+# A sharp crest is both unmachinable and visibly wrong, so the crest flat is
+# part of the profile rather than an optional refinement.
 THREAD_DEPTH_FACTOR = 0.6134
 THREAD_HALF_ANGLE = 30.0
+FUNDAMENTAL_HEIGHT_FACTOR = 0.866025      # H, the untruncated 60 degree triangle
+CREST_FLAT_FACTOR = 1.0 / 8.0             # of the pitch
+ROOT_FLAT_FACTOR = 1.0 / 6.0              # of the pitch
 
 # How far the thread ridge is buried in the core, as a fraction of the pitch.
 # A ridge that only touches the core is tangent to it and the fuse fails.
 SINK_FACTOR = 0.02
+
+# Explicit fuzzy tolerance for the thread fuse, in mm. The ISO form leaves only
+# pitch/6 between one thread's root corner and the next one's, and at that
+# spacing OCC's default tolerance intermittently collapses the whole fuse to a
+# sliver - the same model at 5 mm long came out right and at 8 mm came out
+# empty. A fuzz well below the gap but above OCC's confusion scale makes it
+# deterministic. Do not raise it towards the root flat or adjacent threads will
+# merge into each other.
+BOOLEAN_FUZZ = 1e-5
 
 # The head is fused to the shank through a plug reaching down inside the thread
 # core, so the two solids overlap by volume rather than meeting on a circle.
@@ -126,6 +145,33 @@ def thread_depth(pitch):
 def minor_radius(diameter, pitch):
     """Radius of the plain core the thread sits on."""
     return diameter / 2.0 - thread_depth(pitch)
+
+
+def crest_truncation(pitch):
+    """Radial height cut off the crest of the fundamental triangle: H/8.
+
+    The sweep builds a sharp V whose apex overshoots the major radius by this
+    much, and the shank is then trimmed back to the major radius. Truncating
+    with a cylinder rather than sweeping an already-flat trapezoid is not
+    cosmetic: a trapezoid profile makes consecutive one-turn sweeps meet on
+    coincident quadrilateral end faces, and fusing those returns an invalid
+    solid. A sharp apex meets at a degenerate edge, which fuses cleanly.
+    """
+    return FUNDAMENTAL_HEIGHT_FACTOR * pitch / 8.0
+
+
+def crest_flat(pitch):
+    """Axial width of the flat land on top of a thread.
+
+    Falls out of the geometry: trimming a 30 degree flank at H/8 below the apex
+    leaves 2 * (H/8) * tan(30) == pitch/8.
+    """
+    return CREST_FLAT_FACTOR * pitch
+
+
+def root_flat(pitch):
+    """Axial width of the flat between two adjacent threads."""
+    return ROOT_FLAT_FACTOR * pitch
 
 
 def is_countersunk(kind):
@@ -299,7 +345,13 @@ def build_shank(diameter, length, pitch):
     rmin = minor_radius(diameter, pitch)
     sink = SINK_FACTOR * pitch
     base = rmin - sink
-    half = (h3 + sink) * math.tan(math.radians(THREAD_HALF_ANGLE))
+    # Half-widths of the two parallel sides of the thread form. The flank runs
+    # from one to the other at 30 degrees off radial, so the root half-width is
+    # the crest half-width plus the radial travel times tan(30).
+    # The apex overshoots the major radius by the ISO crest truncation, and the
+    # trim below cuts it back to a flat land of exactly pitch/8.
+    apex = r + crest_truncation(pitch)
+    half = (apex - base) * math.tan(math.radians(THREAD_HALF_ANGLE))
 
     rings = []
     for k in range(ring_count(length, pitch)):
@@ -307,20 +359,22 @@ def build_shank(diameter, length, pitch):
         z = -pitch + k * pitch
         helix = Part.makeHelix(pitch, pitch, base)
         helix.translate(Base.Vector(0, 0, z))
-        # The 60 degree V, apex outwards at the major radius. Frenet mode and
+        # The 60 degree V, apex outwards past the major radius. Frenet mode and
         # the contact/correction flags all get this wrong; the plain
         # makePipeShell(profiles, solid, frenet) form is what works.
         profile = Part.Wire(Part.makePolygon([
             Base.Vector(base, 0, z + half),
             Base.Vector(base, 0, z - half),
-            Base.Vector(r, 0, z),
+            Base.Vector(apex, 0, z),
             Base.Vector(base, 0, z + half),
         ]))
         rings.append(Part.Wire(helix.Edges).makePipeShell([profile], True, True))
 
-    shank = Part.makeCylinder(rmin, length).multiFuse(rings)
-    # The helix overruns both ends, so trim back to a flat-ended shank.
-    shank = shank.common(Part.makeCylinder(r + 1.0, length))
+    shank = Part.makeCylinder(rmin, length).multiFuse(rings, BOOLEAN_FUZZ)
+    # One trim does two jobs: the helix overruns both ends, and the swept apex
+    # overshoots the major radius. Cutting to a cylinder of exactly the major
+    # radius gives a flat-ended shank whose crests are pitch/8 lands.
+    shank = shank.common(Part.makeCylinder(r, length))
 
     # 45 degree lead-in, so the first thread is not a knife edge.
     chamfer = TIP_CHAMFER_FACTOR * h3
