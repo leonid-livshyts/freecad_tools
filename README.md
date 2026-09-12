@@ -34,7 +34,14 @@ the path), or point the macro directory at this repository.
 
 `samples/screw_samples.FCStd` holds all seven head shapes at M8 x 1.25 x 25 mm
 plus the thread at M3 x 0.5, M8 x 1.25 and M20 x 2.5, for eyeballing the form.
-Regenerate it by building the same variants into one document.
+Regenerate it with:
+
+```bash
+flatpak run --command=freecadcmd org.freecad.FreeCAD tools/make_samples.py
+```
+
+Generated samples always go in `samples/` - the script's output path is fixed,
+so nothing lands loose in the project root.
 
 ## Without the GUI
 
