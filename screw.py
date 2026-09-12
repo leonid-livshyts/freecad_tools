@@ -466,3 +466,79 @@ def build_drive(drive, kind, diameter, top_z):
 
     # hex_socket
     return _hex_prism(metrics["flats"] * d, depth + 1.0, top_z - depth)
+
+
+# ---------------------------------------------------------------------------
+# Geometry: the whole screw
+# ---------------------------------------------------------------------------
+
+def screw_label(p):
+    """Human readable name for the finished screw.
+
+    The trailing word matters: FreeCAD makes duplicate labels unique by
+    rewriting a trailing number, so a label ending in the length would come back
+    as "Screw M8x1.25 x 001" on the second screw in a document.
+    """
+    return "Screw M%gx%g x %g mm, %s" % (
+        p["diameter"], p["pitch"], p["length"], dict(HEAD_TYPES)[p["head"]].lower())
+
+
+def build_screw(p, doc=None):
+    """Build the screw and add it to a document.
+
+    p is a dict shaped like DEFAULTS. If doc is None a document is created or
+    the active one is reused, following p["new_document"].
+    Returns the App::Part container holding the screw.
+    """
+    errors, _ = validate(p)
+    if errors:
+        raise ValueError("Invalid screw parameters:\n- " + "\n- ".join(errors))
+
+    d, length, pitch = p["diameter"], p["length"], p["pitch"]
+    kind, drive = p["head"], p["drive"]
+
+    # The head's base plane is the top of the shank. For a countersunk head that
+    # is below the nominal length, because the head sinks into the material.
+    base_z = shank_length(kind, d, length)
+
+    shank = build_shank(d, base_z, pitch)
+    head = build_head(kind, d, base_z)
+
+    # Fuse through a plug reaching down inside the thread core. Head and shank
+    # otherwise meet only on a circle - a countersunk cone's base is exactly the
+    # shank diameter - and that fuse is unreliable.
+    plug_depth = PLUG_DEPTH * d
+    head = head.fuse(Part.makeCylinder(PLUG_FACTOR * minor_radius(d, pitch),
+                                       plug_depth,
+                                       Base.Vector(0, 0, base_z - plug_depth)))
+    solid = shank.fuse(head).removeSplitter()
+
+    cutter = build_drive(drive, kind, d, head_top_z(kind, d, length))
+    if cutter is not None:
+        solid = solid.cut(cutter).removeSplitter()
+
+    if solid.ShapeType == "Compound" and len(solid.Solids) == 1:
+        solid = solid.Solids[0]
+
+    if doc is None:
+        if p.get("new_document", True) or App.ActiveDocument is None:
+            doc = App.newDocument("Screw")
+        else:
+            doc = App.ActiveDocument
+    App.setActiveDocument(doc.Name)
+
+    obj = Part.show(solid, "Screw")
+
+    # An App::Part carries its own origin and Placement, unlike a plain group,
+    # so the finished screw can be moved and reused as one component.
+    part = doc.addObject("App::Part", "Screw")
+    part.Label = screw_label(p)
+    part.addObject(obj)
+
+    doc.recompute()
+    if App.GuiUp:
+        import FreeCADGui as Gui
+        Gui.activeDocument().activeView().viewAxometric()
+        Gui.SendMsgToActiveView("ViewFit")
+
+    return part
