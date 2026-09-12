@@ -316,3 +316,80 @@ def validate(p):
                         "M%g lock nut." % (pitch, d))
 
     return errors, warnings
+
+
+# ---------------------------------------------------------------------------
+# Geometry: the thread
+# ---------------------------------------------------------------------------
+
+def build_thread_tool(diameter, pitch, z0, z1):
+    """The solid a mating screw occupies between z0 and z1, to be cut away.
+
+    Building the negative and subtracting it once is what works. Sweeping a
+    single multi-turn groove and cutting that does not: OCC reports the face
+    valid and then quietly drops most of it from the boolean. Three things here
+    are deliberate and load bearing:
+
+    One sweep per turn, all joined in a single multiFuse - the same reason.
+
+    The core cylinder sits at the crest radius and only the ridge is buried
+    SINK_FACTOR * pitch below it. A ridge merely tangent to the core fails to
+    fuse; a core sunk along with it comes out as an undersized bore with no
+    crest land.
+
+    The half-width is measured at the radius the profile is drawn at. Measuring
+    it at the un-sunk radius instead tilts the flanks to 29.26 degrees, which
+    every validity, volume and radius check in the suite still passes.
+    """
+    r_root = diameter / 2.0 + CLEARANCE
+    base = minor_radius(diameter, pitch) + CLEARANCE
+    apex = r_root + crest_truncation(pitch)
+    core = base - SINK_FACTOR * pitch
+    half = (apex - core) * math.tan(math.radians(THREAD_HALF_ANGLE))
+
+    # Anchor the rings on multiples of the pitch, never on z0: that is what
+    # keeps every nut and every screw in one thread phase.
+    first = int(math.floor(z0 / pitch)) - 1
+    last = int(math.ceil(z1 / pitch)) + 1
+
+    rings = []
+    for k in range(first, last + 1):
+        z = k * pitch
+        helix = Part.makeHelix(pitch, pitch, core)
+        helix.translate(Base.Vector(0, 0, z))
+        # The 60 degree V, apex outwards past the nut's root radius. Frenet mode
+        # and the contact/correction flags all get this wrong; the plain
+        # makePipeShell(profiles, solid, frenet) form is what works.
+        profile = Part.Wire(Part.makePolygon([
+            Base.Vector(core, 0, z + half),
+            Base.Vector(core, 0, z - half),
+            Base.Vector(apex, 0, z),
+            Base.Vector(core, 0, z + half),
+        ]))
+        rings.append(Part.Wire(helix.Edges).makePipeShell([profile], True, True))
+
+    low = first * pitch
+    tool = Part.makeCylinder(base, (last + 1) * pitch - low,
+                             Base.Vector(0, 0, low)).multiFuse(rings, BOOLEAN_FUZZ)
+    # One trim does two jobs: the helix overruns both ends, and the swept apex
+    # overshoots the root radius. Cutting to a cylinder of exactly r_root over
+    # exactly z0..z1 gives a flat-ended tool whose apexes are pitch/8 flats.
+    tool = tool.common(Part.makeCylinder(r_root, z1 - z0, Base.Vector(0, 0, z0)))
+
+    tool = tool.removeSplitter()
+    if tool.ShapeType == "Compound" and len(tool.Solids) == 1:
+        tool = tool.Solids[0]
+    return tool
+
+
+def entry_chamfer(diameter, pitch, z, opening_down):
+    """Cone to subtract at a bore mouth, so the first thread is not a knife edge.
+
+    opening_down is True for the mouth in the bottom face, where the bore has to
+    flare downwards; False for the mouth in a top face.
+    """
+    depth = ENTRY_CHAMFER_FACTOR * thread_depth(pitch)
+    r = diameter / 2.0 + CLEARANCE
+    if opening_down:
+        return Part.makeCone(r + depth, r, depth, Base.Vector(0, 0, z))
+    return Part.makeCone(r, r + depth, depth, Base.Vector(0, 0, z - depth))
