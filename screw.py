@@ -406,3 +406,63 @@ def build_head(kind, diameter, z0):
     if head.ShapeType == "Compound" and len(head.Solids) == 1:
         head = head.Solids[0]
     return head
+
+
+# ---------------------------------------------------------------------------
+# Geometry: drive recesses
+# ---------------------------------------------------------------------------
+
+def _phillips_wing(width_top, width_tip, span, depth, top_z):
+    """One tapered wing of a Phillips recess, open at the top.
+
+    The taper - wider and longer at the surface than at the bottom - is what
+    makes a real Phillips recess self-centring, so it is lofted rather than
+    extruded.
+    """
+    def rectangle(width, length, z):
+        points = [Base.Vector(-length / 2.0, -width / 2.0, z),
+                  Base.Vector(length / 2.0, -width / 2.0, z),
+                  Base.Vector(length / 2.0, width / 2.0, z),
+                  Base.Vector(-length / 2.0, width / 2.0, z)]
+        points.append(points[0])
+        return Part.Wire(Part.makePolygon(points))
+
+    return Part.makeLoft([rectangle(width_top, span, top_z + 0.5),
+                          rectangle(width_tip, span * 0.55, top_z - depth)], True)
+
+
+def build_drive(drive, kind, diameter, top_z):
+    """Cutter for the drive recess, or None when there is no recess.
+
+    top_z is the highest point of the finished screw. Every cutter reaches above
+    it so the cut breaks the surface cleanly even on a domed head.
+    """
+    if drive == "none":
+        return None
+    if drive not in DRIVE_METRICS:
+        raise ValueError("Unknown drive type %r" % drive)
+
+    d = diameter
+    height = head_height(kind, d)
+    # Long enough to cross the whole head whatever its shape.
+    span = 2.2 * head_radius(kind, d)
+    metrics = DRIVE_METRICS[drive]
+    depth = metrics["depth"] * height
+
+    if drive == "slot":
+        width = metrics["width"] * d
+        return Part.makeBox(span, width, depth + 1.0,
+                            Base.Vector(-span / 2.0, -width / 2.0, top_z - depth))
+
+    if drive == "phillips":
+        wing = _phillips_wing(metrics["width"] * d, metrics["tip"] * d,
+                              span, depth, top_z)
+        crossed = wing.copy()
+        crossed.rotate(Base.Vector(0, 0, 0), Base.Vector(0, 0, 1), 90.0)
+        cross = wing.fuse(crossed).removeSplitter()
+        if cross.ShapeType == "Compound" and len(cross.Solids) == 1:
+            cross = cross.Solids[0]
+        return cross
+
+    # hex_socket
+    return _hex_prism(metrics["flats"] * d, depth + 1.0, top_z - depth)
