@@ -1,2 +1,0 @@
-export PATH=/opt/homebrew/bin:/home/leonid/.local/bin:/usr/local/bin:/opt/homebrew/bin:/home/leonid/.local/bin:/usr/local/bin:/home/leonid/.pyenv/versions/3.14.2/bin:/home/leonid/.local/bin:/home/leonid/.local/bin:/home/leonid/.local/bin:/home/leonid/.nvm/versions/node/v24.13.0/bin:/home/leonid/.local/bin:/home/leonid/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/games:/usr/local/games:/snap/bin:/snap/bin
-export ARCHETYPES_MD=.great_cto/ARCHETYPES.md
