@@ -60,3 +60,14 @@ def max_radius(shape):
 
 def min_radius(shape):
     return min(math.hypot(v.Point.x, v.Point.y) for v in shape.Vertexes)
+
+
+def z_extent(shape):
+    """(lowest, highest) vertex z.
+
+    Same reason as max_radius: BoundBox on a shape carrying swept thread faces
+    reports the control-pole hull, which overshoots a trimmed shank by a whole
+    pitch at each end even though the geometry is correctly flat-ended.
+    """
+    zs = [v.Point.z for v in shape.Vertexes]
+    return min(zs), max(zs)

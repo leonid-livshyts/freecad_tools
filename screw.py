@@ -274,3 +274,64 @@ def validate(p):
                                                  2 * head_radius(kind, d)))
 
     return errors, warnings
+
+
+# ---------------------------------------------------------------------------
+# Geometry: shank
+# ---------------------------------------------------------------------------
+
+def build_shank(diameter, length, pitch):
+    """Threaded shank, tip at z=0 and a flat top face at z=length.
+
+    The thread is built additively, as a helical ridge on a core of the minor
+    diameter. Two things about this are deliberate and load bearing:
+
+    One sweep per turn. Sweeping the whole helix in a single MakePipeShell
+    builds a face that wraps dozens of times; it reports isValid() but OCC then
+    quietly drops it from the boolean, leaving an almost unthreaded rod. Each
+    turn is swept separately and all of them go into one multiFuse.
+
+    The ridge is buried SINK_FACTOR * pitch into the core. A ridge whose base
+    merely touches the core is tangent to it, and that fuse fails outright.
+    """
+    r = diameter / 2.0
+    h3 = thread_depth(pitch)
+    rmin = minor_radius(diameter, pitch)
+    sink = SINK_FACTOR * pitch
+    base = rmin - sink
+    half = (h3 + sink) * math.tan(math.radians(THREAD_HALF_ANGLE))
+
+    rings = []
+    for k in range(ring_count(length, pitch)):
+        # Start one turn below the tip so the thread runs off the end cleanly.
+        z = -pitch + k * pitch
+        helix = Part.makeHelix(pitch, pitch, base)
+        helix.translate(Base.Vector(0, 0, z))
+        # The 60 degree V, apex outwards at the major radius. Frenet mode and
+        # the contact/correction flags all get this wrong; the plain
+        # makePipeShell(profiles, solid, frenet) form is what works.
+        profile = Part.Wire(Part.makePolygon([
+            Base.Vector(base, 0, z + half),
+            Base.Vector(base, 0, z - half),
+            Base.Vector(r, 0, z),
+            Base.Vector(base, 0, z + half),
+        ]))
+        rings.append(Part.Wire(helix.Edges).makePipeShell([profile], True, True))
+
+    shank = Part.makeCylinder(rmin, length).multiFuse(rings)
+    # The helix overruns both ends, so trim back to a flat-ended shank.
+    shank = shank.common(Part.makeCylinder(r + 1.0, length))
+
+    # 45 degree lead-in, so the first thread is not a knife edge.
+    chamfer = TIP_CHAMFER_FACTOR * h3
+    if chamfer > 0:
+        ring = Part.makeCylinder(r + 1.0, chamfer).cut(
+            Part.makeCone(r - chamfer, r, chamfer))
+        shank = shank.cut(ring)
+
+    shank = shank.removeSplitter()
+    # multiFuse and the trim hand back a single-solid compound; unwrap it so
+    # callers get a solid they can fuse and Part.show without a nested layer.
+    if shank.ShapeType == "Compound" and len(shank.Solids) == 1:
+        shank = shank.Solids[0]
+    return shank
