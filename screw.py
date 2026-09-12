@@ -335,3 +335,74 @@ def build_shank(diameter, length, pitch):
     if shank.ShapeType == "Compound" and len(shank.Solids) == 1:
         shank = shank.Solids[0]
     return shank
+
+
+# ---------------------------------------------------------------------------
+# Geometry: heads
+# ---------------------------------------------------------------------------
+
+def _spherical_cap(base_radius, height, z0):
+    """Spherical cap of the given base radius and height, sitting on z0.
+
+    The sphere radius is chosen so the cap meets the z0 plane at exactly
+    base_radius, which keeps the head diameter exact without a trim boolean:
+    at z0 the sphere centre is (R - height) away, so the circle there has
+    radius sqrt(R^2 - (R - height)^2) = base_radius.
+    """
+    R = (base_radius ** 2 + height ** 2) / (2.0 * height)
+    sphere = Part.makeSphere(R)
+    sphere.translate(Base.Vector(0, 0, z0 + height - R))
+    return sphere.common(
+        Part.makeCylinder(base_radius + 1.0, height, Base.Vector(0, 0, z0)))
+
+
+def _hex_prism(across_flats, height, z0):
+    """Hexagonal prism of the given wrench size, standing on z0."""
+    rc = across_flats / math.sqrt(3.0)
+    points = [Base.Vector(rc * math.cos(i * math.pi / 3.0),
+                          rc * math.sin(i * math.pi / 3.0), z0) for i in range(6)]
+    points.append(points[0])
+    return Part.Face(Part.makePolygon(points)).extrude(Base.Vector(0, 0, height))
+
+
+def build_head(kind, diameter, z0):
+    """One head solid with its base plane on z0.
+
+    Curved heads are spherical caps rather than swept or filleted profiles: the
+    cap is exact, cheap, and needs no fillet that OCC might refuse. Where a cap
+    tops a cylinder or a cone the two meet on a full coincident plane, which
+    fuses cleanly - do not offset them into each other, that leaves a visible
+    ledge where the cap has already narrowed.
+    """
+    if kind not in HEAD_METRICS:
+        raise ValueError("Unknown head type %r" % kind)
+
+    d = diameter
+    height = head_height(kind, d)
+    radius = head_radius(kind, d)
+
+    if kind == "flat":
+        # 90 degree countersink: the ratios make the flank exactly 45 degrees.
+        head = Part.makeCone(d / 2.0, radius, height, Base.Vector(0, 0, z0))
+    elif kind == "oval":
+        cone = Part.makeCone(d / 2.0, radius, height, Base.Vector(0, 0, z0))
+        dome = HEAD_METRICS["oval"]["dome"] * d
+        head = cone.fuse(_spherical_cap(radius, dome, z0 + height))
+    elif kind == "pan":
+        # Straight flank with a domed crown on top.
+        stem = 0.55 * height
+        head = Part.makeCylinder(radius, stem, Base.Vector(0, 0, z0))
+        head = head.fuse(_spherical_cap(radius, height - stem, z0 + stem))
+    elif kind in ("round", "mushroom", "truss"):
+        # The same cap at three different width-to-height ratios: round is a
+        # tall dome, mushroom a wide low one, truss wider and lower still.
+        head = _spherical_cap(radius, height, z0)
+    elif kind == "hex":
+        head = _hex_prism(head_across_flats(d), height, z0)
+    else:
+        raise ValueError("Unknown head type %r" % kind)
+
+    head = head.removeSplitter()
+    if head.ShapeType == "Compound" and len(head.Solids) == 1:
+        head = head.Solids[0]
+    return head
