@@ -494,4 +494,44 @@ def build_body(kind, diameter):
         other.rotate(Base.Vector(0, 0, 0), Base.Vector(0, 0, 1), 180.0)
         return _unwrap(body.fuse(wing).fuse(other))
 
+    if kind == "lock":
+        # DIN 985: a hex body with a reduced-diameter crown on top holding the
+        # nylon collar. Only the bottom face is chamfered; the crown occupies
+        # the top. The crown radius is the hex's chamfer circle, so the two meet
+        # on a shared edge with no ledge.
+        crown_r = CHAMFER_CIRCLE * width / 2.0
+        crown_h = NUT_METRICS[kind]["crown"] * diameter
+        body = _hex_prism(width, height)
+        body = body.cut(_face_chamfer(width, 0.0, True))
+        crown = Part.makeCylinder(crown_r, crown_h, Base.Vector(0, 0, height))
+        # Break the crown's top edge, so it is not a raw square corner.
+        lip = ENTRY_CHAMFER_FACTOR * crown_h / 4.0
+        crown = crown.cut(
+            Part.makeCylinder(crown_r + 1.0, lip,
+                              Base.Vector(0, 0, height + crown_h - lip)).cut(
+                Part.makeCone(crown_r, crown_r - lip, lip,
+                              Base.Vector(0, 0, height + crown_h - lip))))
+        return _unwrap(body.fuse(crown))
+
+    if kind == "lug":
+        # A wheel nut: 60 degree conical seat at the bottom, hex flats above it,
+        # closed dome on top. The seat is made by intersecting the prism with a
+        # cone-plus-cylinder solid of revolution, which trims the hex corners
+        # away over the seat's height and leaves them alone above it.
+        r_corner = width / math.sqrt(3.0)
+        seat_h = NUT_METRICS[kind]["seat"] * diameter
+        # 60 degrees included means the radius grows by rise * tan(30).
+        r_seat = r_corner - seat_h * math.tan(math.radians(30.0))
+        envelope = Part.makeCone(r_seat, r_corner, seat_h).fuse(
+            Part.makeCylinder(r_corner, height - seat_h,
+                              Base.Vector(0, 0, seat_h)))
+        body = _hex_prism(width, height).common(envelope)
+        # Chamfer the top face only: the bottom is the seat.
+        body = body.cut(_face_chamfer(width, height, False))
+        # The dome springs from the chamfer circle, so the two meet with no
+        # ledge - the same trick the lock nut's crown uses.
+        dome = _spherical_cap(CHAMFER_CIRCLE * width / 2.0,
+                              NUT_METRICS[kind]["dome"] * diameter, height)
+        return _unwrap(body.fuse(dome))
+
     raise ValueError("Unknown nut type %r." % kind)
