@@ -535,3 +535,93 @@ def build_body(kind, diameter):
         return _unwrap(body.fuse(dome))
 
     raise ValueError("Unknown nut type %r." % kind)
+
+
+# ---------------------------------------------------------------------------
+# Geometry: the whole nut
+# ---------------------------------------------------------------------------
+
+def nut_label(p):
+    """Human readable name for the finished nut.
+
+    The trailing word matters: FreeCAD makes duplicate labels unique by
+    rewriting a trailing number, so a label ending in the pitch would come back
+    as "Nut M8x001" on the second nut in a document.
+    """
+    return "Nut M%gx%g, %s" % (p["diameter"], p["pitch"],
+                              dict(NUT_TYPES)[p["kind"]].lower())
+
+
+def build_nut(p, doc=None):
+    """Build the nut and add it to a document.
+
+    p is a dict shaped like DEFAULTS. If doc is None a document is created or
+    the active one is reused, following p["new_document"].
+    Returns the App::Part container holding the nut.
+    """
+    errors, _ = validate(p)
+    if errors:
+        raise ValueError("Invalid nut parameters:\n- " + "\n- ".join(errors))
+
+    d, pitch, kind = p["diameter"], p["pitch"], p["kind"]
+    threaded = thread_height(kind, d)
+    through = threaded >= body_height(kind, d) - 1e-9
+
+    solid = build_body(kind, d)
+
+    # Run the tool past the bottom face so the thread is cut right through it,
+    # and past the top of the BODY when the bore is open. Not past the overall
+    # height: a wing nut's wings stand well above its body and cross the axis,
+    # and threading to the overall height drills a channel up through them.
+    # A blind bore stops dead at the thread height, which leaves the flat bottom
+    # a real drilled hole has.
+    z1 = body_height(kind, d) + pitch if through else threaded
+    tool = build_thread_tool(d, pitch, -pitch, z1)
+    solid = solid.cut(tool, BOOLEAN_FUZZ)
+
+    # Nothing standing above the body may close over the bore: the space
+    # between a wing nut's two wings is open on a real one. A no-op for every
+    # other style, whose overall height is its body height or is blind anyway.
+    open_above = overall_height(kind, d) - body_height(kind, d)
+    if through and open_above > 0:
+        solid = solid.cut(Part.makeCylinder(
+            d / 2.0 + CLEARANCE, open_above + pitch,
+            Base.Vector(0, 0, body_height(kind, d))))
+
+    # A lock nut's nylon collar: an unthreaded bore under the thread's crest,
+    # running from the top of the thread out through the crown, so a screw has
+    # to cut its own way through it. This is what makes the nut lock.
+    if kind == "lock":
+        solid = solid.cut(Part.makeCylinder(
+            collar_radius(d, pitch), overall_height(kind, d) - threaded + pitch,
+            Base.Vector(0, 0, threaded)))
+
+    # Break the mouth of the bore so the first thread is not a knife edge.
+    solid = solid.cut(entry_chamfer(d, pitch, 0.0, True))
+    if through:
+        solid = solid.cut(entry_chamfer(d, pitch, body_height(kind, d), False))
+
+    solid = _unwrap(solid)
+
+    if doc is None:
+        if p.get("new_document", True) or App.ActiveDocument is None:
+            doc = App.newDocument("Nut")
+        else:
+            doc = App.ActiveDocument
+    App.setActiveDocument(doc.Name)
+
+    obj = Part.show(solid, "Nut")
+
+    # An App::Part carries its own origin and Placement, unlike a plain group,
+    # so the finished nut can be moved and reused as one component.
+    part = doc.addObject("App::Part", "Nut")
+    part.Label = nut_label(p)
+    part.addObject(obj)
+
+    doc.recompute()
+    if App.GuiUp:
+        import FreeCADGui as Gui
+        Gui.activeDocument().activeView().viewAxometric()
+        Gui.SendMsgToActiveView("ViewFit")
+
+    return part
