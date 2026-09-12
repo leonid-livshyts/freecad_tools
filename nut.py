@@ -129,7 +129,10 @@ NUT_METRICS = {
 WING_SPAN = 1.60          # how far a wing reaches from the axis
 WING_THICKNESS = 0.25
 WING_HEIGHT = 1.45
-WING_ROUND_RADIUS = 1.30
+# 1.30 would clear the plate's outer bottom corner by 0.015 mm - a
+# near-tangent boolean, and the one shape of cut OCC is worst at. 1.35 clears
+# it by 0.4 mm and still takes the outer top corner off.
+WING_ROUND_RADIUS = 1.35
 WING_ROUND_X = 0.35       # centre of the rounding cylinder
 WING_ROUND_Z = 0.35
 
@@ -452,6 +455,26 @@ def _unwrap(shape):
     return shape
 
 
+def _wing(diameter):
+    """One wing: a plate in the XZ plane, rounded off at the outer top.
+
+    The rounding is a single intersection with a cylinder lying along Y rather
+    than a fillet on picked edges, so it cannot go stale when the plate changes.
+    The plate starts at the axis so it overlaps the body by a solid volume and
+    the fuse has something to bite on.
+    """
+    span = WING_SPAN * diameter
+    half_t = WING_THICKNESS * diameter / 2.0
+    height = WING_HEIGHT * diameter
+
+    plate = Part.makeBox(span, 2 * half_t, height, Base.Vector(0, -half_t, 0))
+    rounder = Part.makeCylinder(
+        WING_ROUND_RADIUS * diameter, 4 * half_t,
+        Base.Vector(WING_ROUND_X * diameter, -2 * half_t, WING_ROUND_Z * diameter),
+        Base.Vector(0, 1, 0))
+    return plate.common(rounder)
+
+
 def build_body(kind, diameter):
     """The nut's outside shape, before the thread is cut. Base at z=0."""
     width = across_flats(kind, diameter)
@@ -462,5 +485,13 @@ def build_body(kind, diameter):
         body = body.cut(_face_chamfer(width, 0.0, True))
         body = body.cut(_face_chamfer(width, height, False))
         return _unwrap(body)
+
+    if kind == "wing":
+        # A round body, not a hex one: a wing nut is turned by its wings.
+        body = Part.makeCylinder(width / 2.0, height)
+        wing = _wing(diameter)
+        other = wing.copy()
+        other.rotate(Base.Vector(0, 0, 0), Base.Vector(0, 0, 1), 180.0)
+        return _unwrap(body.fuse(wing).fuse(other))
 
     raise ValueError("Unknown nut type %r." % kind)
