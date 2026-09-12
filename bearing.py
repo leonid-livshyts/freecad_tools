@@ -160,7 +160,7 @@ def build_bearing(p, doc=None):
 
     p is a dict shaped like DEFAULTS. If doc is None a document is created or
     the active one is reused, following p["new_document"].
-    Returns the created document objects.
+    Returns the App::Part container holding the rings and the balls.
     """
     errors, _ = validate(p)
     if errors:
@@ -212,11 +212,16 @@ def build_bearing(p, doc=None):
         ball.translate((cball * math.cos(alpha), cball * math.sin(alpha), th / 2.0))
         objects.append(Part.show(ball, "Ball"))
 
-    # Keep the tree readable when several bearings share a document.
-    group = doc.addObject("App::DocumentObjectGroup", "Bearing")
-    group.Label = "Bearing %g-%g-%g" % (2 * r1, 2 * r4, th)
+    # Collect everything in an App::Part container. Unlike a plain group this
+    # carries its own origin and Placement, so the finished bearing can be
+    # moved, rotated and reused as a single component of a larger assembly.
+    part = doc.addObject("App::Part", "Bearing")
+    # The trailing unit matters: FreeCAD makes duplicate labels unique by
+    # rewriting a trailing number, so a label ending in the width would come
+    # back as "Bearing 30-80-001" on the second bearing in a document.
+    part.Label = "Bearing %g-%g-%g mm" % (2 * r1, 2 * r4, th)
     for obj in objects:
-        group.addObject(obj)
+        part.addObject(obj)
 
     # Make it pretty
     doc.recompute()
@@ -225,7 +230,7 @@ def build_bearing(p, doc=None):
         Gui.activeDocument().activeView().viewAxometric()
         Gui.SendMsgToActiveView("ViewFit")
 
-    return objects
+    return part
 
 
 # ---------------------------------------------------------------------------
