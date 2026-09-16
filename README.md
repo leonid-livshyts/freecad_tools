@@ -40,14 +40,24 @@ the dialog shows the turn count and an estimate.
 
 ## `nut.py` - nut with a modelled internal thread
 
-The same thread in its internal form, in four body styles.
+The same thread in its internal form, in four body styles: a **hex** nut with
+chamfered bearing faces, a **wing** nut, a **lock** nut with a nylon-insert
+collar the screw cuts its own path through, and a closed-end **lug** nut with a
+60 degree cone seat.
 
-Fill in: diameter, pitch and nut type (hex, wing, nylon-insert lock, closed-end
-lug). Everything else follows from the diameter. The thread carries 0.2 mm of
-radial clearance, about 0.1 mm of play on a screw, and a nut and a `screw.py`
-screw of the same size mate without any hand alignment.
+Fill in: diameter, pitch and nut type. Everything else - across flats, height,
+wall thickness, wing span, collar, cone seat - follows from the diameter as
+rounded ISO/DIN ratios, so an M8 hex nut comes out 12.8 x 6.4 mm. Hex and wing
+nuts are threaded right through; lock and lug nuts are closed at the top, so
+their thread is blind.
+
+The thread carries 0.2 mm of radial clearance, about 0.1 mm of play on a screw.
+A nut and a `screw.py` screw of the same diameter and pitch share one thread
+phase, so they mate without any hand alignment - the pair on the left below.
+A nut is only a few turns and builds in about a second.
 
 ![Nut dialog](images/nut-dialog.png)
+![Nut styles built in FreeCAD](images/nut-samples.png)
 
 ## Samples
 
@@ -60,7 +70,6 @@ flatpak run --command=freecadcmd org.freecad.FreeCAD tools/make_samples.py
 ```
 
 ![Screw samples in FreeCAD](images/screw-samples.png)
-![Nut samples in FreeCAD](images/nut-samples.png)
 
 ## Without the GUI
 
