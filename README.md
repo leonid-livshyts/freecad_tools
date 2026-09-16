@@ -1,112 +1,84 @@
 # FreeCAD tools
 
-Parametric part generators for FreeCAD, each a single-file macro with a
-parameter dialog. Tested on FreeCAD 1.1.3.
+Parametric part generators for FreeCAD - a ball bearing, a screw and a nut.
+Each is a single-file macro with a parameter dialog. Tested on FreeCAD 1.1.3.
 
 ## Install
 
 Copy the `.py` file into your FreeCAD macro directory (Macro -> Macros... shows
-the path), or point the macro directory at this repository.
+the path), then Macro -> Macros... -> select it -> Execute.
 
-## Tools
+Every dialog previews the derived sizes as you type, refuses values that cannot
+be built, and can put the part in a new document or the active one.
 
-- **`bearing.py`** - ball bearing: bore, ring radii, thickness, ball count and
-  size, optional fillets.
-- **`screw.py`** - screw with a modelled ISO metric thread: diameter, length and
-  pitch in millimetres, seven head shapes (flat, oval, pan, round, mushroom,
-  truss, hex) and four drive recesses (none, slot, Phillips, hex socket).
+## `bearing.py` - ball bearing
 
-  `length` is the shank length under the head, except for the countersunk flat
-  and oval heads, which sink into the material and so are measured overall.
+Two rings, a race groove and a ring of balls. You set all eight dimensions, so
+it is not tied to a standard size.
 
-  Head sizes are derived from the screw diameter as rounded ISO/DIN ratios, so
-  any diameter gives a plausible head - right for visualisation and printing,
-  not a certified fastener.
+Fill in: bore radius R1, inner ring outer radius R2, outer ring inner radius
+R3, outer radius R4, thickness TH, ball radius, fillet radius (0 = none) and
+the number of balls. These are radii, not diameters - the defaults make a
+30 x 80 x 15 mm bearing.
 
-  The thread is real helical geometry in the ISO 68-1 form - 60 degree flanks,
-  depth 0.6134 x pitch, a crest land of pitch/8 and a root flat of pitch/6 - and
-  `tests/test_shank.py` measures all of that off an axial section. It is built
-  one turn at a time, which costs roughly a quarter of a second per turn; the
-  dialog shows the turn count and an estimated build time, and warns past 150
-  turns.
+![Ball bearing dialog](images/bearing-dialog.png)
+![Bearing built in FreeCAD](images/bearing-result.png)
 
-- **`nut.py`** - nut with a modelled ISO metric internal thread: diameter and
-  pitch in millimetres, four body styles (hex, wing, nylon-insert lock,
-  closed-end lug).
+## `screw.py` - screw with a modelled thread
 
-  Everything but the diameter and the pitch is derived from the diameter as
-  rounded ISO/DIN ratios, so any size gives a plausible nut - right for
-  visualisation and printing, not a certified fastener.
+Real ISO metric thread geometry, seven head shapes and four drive recesses.
 
-  The internal thread is the ISO 68-1 nut form, which is the complement of the
-  screw's: depth 5H/8, a crest land of pitch/4 at the minor diameter and a root
-  flat of pitch/8 at the major. `tests/test_nut_thread.py` measures all of that
-  off an axial section. Every cut surface carries 0.2 mm of radial clearance,
-  which leaves about 0.1 mm of play on a screw - a radial offset only moves a
-  30 degree flank by its own sine, so you get back half of what you put in.
+Fill in: diameter, length, pitch, head shape (flat, oval, pan, round,
+mushroom, truss, hex) and drive (none, slot, Phillips, hex socket). Head sizes
+come from the diameter as rounded ISO/DIN ratios. `Length` is the shank under
+the head, except on the countersunk flat and oval heads, where it is overall.
+The thread is built one turn at a time, about a quarter second per turn, and
+the dialog shows the turn count and an estimate.
 
-  A `nut.py` nut and a `screw.py` screw of the same size mate without any hand
-  alignment: both anchor their thread rings on exact multiples of the pitch, so
-  they share one thread phase. `tests/test_nut_fit.py` proves it by measuring
-  the gap between the two solids, and a nut is only a few turns, so it builds
-  in about a second.
+![Screw dialog](images/screw-dialog.png)
+![Screw built in FreeCAD](images/screw-result.png)
+
+## `nut.py` - nut with a modelled internal thread
+
+The same thread in its internal form, in four body styles.
+
+Fill in: diameter, pitch and nut type (hex, wing, nylon-insert lock, closed-end
+lug). Everything else follows from the diameter. The thread carries 0.2 mm of
+radial clearance, about 0.1 mm of play on a screw, and a nut and a `screw.py`
+screw of the same size mate without any hand alignment.
+
+![Nut dialog](images/nut-dialog.png)
 
 ## Samples
 
-`samples/screw_samples.FCStd` holds all seven head shapes at M8 x 1.25 x 25 mm
-plus the thread at M3 x 0.5, M8 x 1.25 and M20 x 2.5, for eyeballing the form.
-`samples/nut_samples.FCStd` holds all four body styles at M8 x 1.25, plus an M8
-screw seated in a hex nut so the fit can be eyeballed rather than taken on
-trust.
-
-Regenerate them with:
+`samples/screw_samples.FCStd` holds all seven head shapes plus the thread at
+M3, M8 and M20; `samples/nut_samples.FCStd` holds all four nut styles and an M8
+screw seated in a hex nut. Regenerate with:
 
 ```bash
 flatpak run --command=freecadcmd org.freecad.FreeCAD tools/make_samples.py
 ```
 
-Generated samples always go in `samples/` - the script's output path is fixed,
-so nothing lands loose in the project root.
+![Screw samples in FreeCAD](images/screw-samples.png)
+![Nut samples in FreeCAD](images/nut-samples.png)
 
 ## Without the GUI
 
-Both macros work headless:
-
 ```python
-import screw
-screw.build_screw(dict(screw.DEFAULTS, diameter=6.0, length=20.0, pitch=1.0,
-                       head="hex", drive="none"))
-
-import nut
+import bearing, screw, nut
+bearing.build_bearing(dict(bearing.DEFAULTS, R1=10.0, R4=30.0, TH=9.0))
+screw.build_screw(dict(screw.DEFAULTS, diameter=6.0, length=20.0, head="hex"))
 nut.build_nut(dict(nut.DEFAULTS, diameter=8.0, pitch=1.25, kind="hex"))
 ```
 
 ## Tests
 
-No pytest inside the FreeCAD Flatpak, so the tests are plain scripts that print
-a `RESULT:` line. `freecadcmd` always exits 0, so that sentinel is what counts:
+Plain scripts under `tests/`, since there is no pytest inside the FreeCAD
+Flatpak. Each prints a `RESULT:` line:
 
 ```bash
-for t in params shank heads drives screw preview \
-         nut_params nut_thread nut_bodies nut nut_fit nut_preview; do
-  flatpak run --command=freecadcmd org.freecad.FreeCAD tests/test_$t.py 2>&1 | grep -m1 RESULT
-done
+flatpak run --command=freecadcmd org.freecad.FreeCAD tests/test_screw.py 2>&1 | grep RESULT
 ```
 
-The dialog test needs the GUI binary, because the whole dialog layer sits behind
-`App.GuiUp`. It drives the widgets offscreen and mirrors its results to a file,
-since the GUI swallows stdout into FreeCAD's Report view:
-
-```bash
-flatpak run --env=QT_QPA_PLATFORM=offscreen \
-  --env=HARNESS_OUT=$PWD/tests/.dialog_result.txt \
-  org.freecad.FreeCAD tests/test_dialog.py >/dev/null 2>&1
-grep RESULT tests/.dialog_result.txt
-
-flatpak run --env=QT_QPA_PLATFORM=offscreen \
-  --env=HARNESS_OUT=$PWD/tests/.nut_dialog_result.txt \
-  org.freecad.FreeCAD tests/test_nut_dialog.py >/dev/null 2>&1
-grep RESULT tests/.nut_dialog_result.txt
-```
-
-Scripts must live inside this directory: the Flatpak sandbox cannot read `/tmp`.
+The two dialog tests need the GUI binary and write their result to the file
+named by `HARNESS_OUT`; see the top of `tests/test_dialog.py`.
